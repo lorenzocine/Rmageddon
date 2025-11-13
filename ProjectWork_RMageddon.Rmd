@@ -1,0 +1,831 @@
+---
+title: "ProjectWork_RMageddon"
+author: "Lorenzo Cinelli, Fillippo Novelli, Andrea Goberti, Riccardo Baldini"
+date: "2025-03-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Major League Baseball 1986/1987
+
+This project will analyze the **Hitters** dataset which has information about players in the 1986/1987 season. We will apply a multinomial logistic regression model to predict the salary level of baseball
+players, given their full set of performance statistics. After so, we will quantify the prediction error using cross-validation approaches and then we will try to identify a better model for this project.
+
+### Usage of ChatGPT
+
+Overall we have used ChatGPT for the visuals, such as histograms, boxplots and the correlation matrix. All this to make sure they were aesthetically pleasing and everything was in place. We also talked with classmates and consulted different accuracy and error rate outputs so to analyze and understand what was going on. ChatGPT was overall very helpful in allowing us to understand what exactly some outputs meant, for example the sensitivity and specificity numbers or the confusion matrix and Kappa values. 
+
+Overall ChatGPT was of help in allowing us to understand better the project and certain values, and also helped in creating aesthetically pleasing images for the reader to look at.
+
+## **Multinomial Logistic Regression Model Formalization**
+
+### **Mathematical Representation**
+Multinomial logistic regression (MLR) is an extension of binary logistic regression that handles classification problems with more than two categories.
+
+In a generic format, given \( K \) possible classes, the probability of class \( k \) given input \( X \) is:
+
+\[
+P(Y = k | X) = \frac{\exp(\beta_{k0} + \beta_{k1}X_1 + \beta_{k2}X_2 + ... + \beta_{kp}X_p)}{1 + \sum_{j=1}^{K-1} \exp(\beta_{j0} + \beta_{j1}X_1 + ... + \beta_{jp}X_p)}
+\]
+
+for \( k = 1, ..., K-1 \), where:
+
+- \( P(Y = k | X) \) represents the probability of belonging to class \( k \) given the predictors \( X \).
+- \( \beta_{k0} \) is the intercept for class \( k \).
+- \( \beta_{ki} \) are the coefficients corresponding to each predictor \( X_i \).
+- The denominator ensures that all class probabilities sum to 1.
+
+For a **three-class problem** (\( K = 3 \)), the probabilities are:
+
+\[
+P(Y = \text{Low}) = \frac{1}{1 + e^{f_1(X)} + e^{f_2(X)}}
+\]
+
+\[
+P(Y = \text{Medium}) = \frac{e^{f_1(X)}}{1 + e^{f_1(X)} + e^{f_2(X)}}
+\]
+
+\[
+P(Y = \text{High}) = \frac{e^{f_2(X)}}{1 + e^{f_1(X)} + e^{f_2(X)}}
+\]
+
+where:
+
+\[
+f_1(X) = \beta_{10} + \sum \beta_{1i} X_i
+\]
+
+\[
+f_2(X) = \beta_{20} + \sum \beta_{2i} X_i
+\]
+
+---
+
+### **Comparison: Multinomial vs. Binary Logistic Regression**
+| Feature | **Binary Logistic Regression** | **Multinomial Logistic Regression** |
+|---------|--------------------------------|-------------------------------------|
+| **Target Variable** | Two classes (e.g., 0 or 1) | More than two classes (e.g., Low, Medium, High) |
+| **Formula** | Uses one log-odds function | Uses \( K-1 \) log-odds functions |
+| **Computation** | One equation for one probability | Multiple equations for different categories |
+| **Output** | A single probability score | Multiple probabilities summing to 1 |
+
+**Key Differences:**
+- Binary logistic regression defines a **single decision boundary**, whereas multinomial logistic regression defines **multiple boundaries** to separate more than two categories.
+- Multinomial logistic regression requires estimating more parameters and is computationally more complex.
+
+---
+
+#### **Conclusion**
+Multinomial logistic regression is useful when the dependent variable has **more than two** possible outcomes. It generalizes binary logistic regression by computing multiple log-odds equations, making it **more flexible** for multi-class classification problems.
+
+---
+
+## Now let's start analyzing the data!!!
+
+```{r}
+
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+library(caret)
+library(gridExtra)
+library(reshape2)
+library(nnet)
+
+```
+
+
+```{r}
+Hitters <- read.csv("~/Desktop/Hitters.csv")
+```
+
+
+```{r}
+head(Hitters)
+```
+
+```{r}
+str(Hitters)
+```
+
+
+```{r}
+summary(Hitters)
+```
+
+## Main Findings
+
+From this initial analysis of the CSV given, we have the following conclusions; The dataset contains 317 rows and 20 columns. It is broken down like so: 
+
+- Player Performance (Per Season)
+
+  - AtBat, Hits, HmRun, Runs, RBI, Walks → These represent a player's performance.
+  
+- Career Statistics
+
+  - CAtBat, CHits, CHmRun, CRuns, CRBI, CWalks → These are cumulative career stats.
+  
+- Defensive Stats
+
+  - PutOuts, Assists, Errors → Fielding performance.
+  
+- Experience
+
+  - Years → Number of years played in the Major League.
+  
+- **Categorical Variables**
+
+  - League (A/N), Division (E/W), NewLeague (A/N).
+  
+- Target Variable
+
+  - ***Salary*** → The player's salary (in $1000s), but 58 values are missing.
+
+
+```{r}
+# Check for missing values
+colSums(is.na(Hitters))
+```
+
+
+```{r}
+# Remove rows with missing Salary values
+Hitters_cleaned <- na.omit(Hitters)
+
+
+sum(is.na(Hitters_cleaned$Salary))
+
+```
+```{r}
+#now lets see if the colSums are all 0's
+colSums(is.na(Hitters_cleaned))
+```
+
+The missing values were really important to get rid of because it could heavily affect the functionality of this analysis:
+
+- Missing salary values would disrupt model training (since it's our target variable).
+
+- Instead of mean imputation which probably would have introduced bias, we remove the missing values to keep the dataset clean.
+
+- We will now provide a more visual and in depth reasoning as to *why* we got rid of the missing values instead of doing some imputation.
+
+  
+  
+```{r}
+boxplot(Hitters$Runs ~ is.na(Hitters$Salary), main="Runs vs Missing Salary", col=c("blue", "red"))
+
+```
+
+There is a clear trend showing that players with missing salary data tend to have lower offensive performance (Runs). This suggests that missing salary values may not be random—they’re likely associated with lower performance, and possibly less media or league attention. But...... we are going to run some t-tests to make sure that what we are seeing is actually true🧐🧐🧐
+
+
+```{r}
+
+t_crbi   <- t.test(Hitters$CRBI ~ is.na(Hitters$Salary))
+t_cruns  <- t.test(Hitters$CRuns ~ is.na(Hitters$Salary))
+t_catbat <- t.test(Hitters$CAtBat ~ is.na(Hitters$Salary))
+t_chmrun <- t.test(Hitters$CHmRun ~ is.na(Hitters$Salary))
+t_years  <- t.test(Hitters$Years ~ is.na(Hitters$Salary))
+t_rbi  <- t.test(Hitters$RBI ~ is.na(Hitters$Salary))
+
+
+p_values_new <- data.frame(
+  Variable = c("CRBI", "CRuns", "CAtBat", "CHmRun", "Years", "RBI"),
+  P_Value = c(t_crbi$p.value, t_cruns$p.value, t_catbat$p.value, t_chmrun$p.value, t_years$p.value, t_rbi$p.value)
+)
+
+
+p_values_new$Significant <- ifelse(p_values_new$P_Value < 0.05, "Yes", "No")
+
+
+print(p_values_new)
+
+```
+
+- RBI is the only significant predictor of missing salary among the tested variables. Players with missing salary data are likely to differ in RBI from those with reported salary—possibly performing worse.
+
+- Other variables like career runs, home runs, at-bats, and years of experience do not significantly differ, meaning missingness in salary is not strongly associated with those metrics.
+
+- RBI might be an underlying driver or proxy for salary visibility, but it could also be the only one to differ in the entire dataset.
+
+
+```{r}
+par(mfrow=c(2,3))  
+
+hist(Hitters$Years, main="Years (Before)", col="blue", breaks=10)
+hist(Hitters_cleaned$Years, main="Years (After)", col="red", breaks=10)
+
+hist(Hitters$RBI, main="RBI (Before)", col="blue", breaks=10)
+hist(Hitters_cleaned$RBI, main="RBI (After)", col="red", breaks=10)
+
+hist(Hitters$Runs, main="Runs (Before)", col="blue", breaks=10)
+hist(Hitters_cleaned$Runs, main="Runs (After)", col="red", breaks=10)
+```
+
+### Why We Removed Rows with NA Salary Values
+
+- **Focused Removal**:
+
+  - Only rows with missing (NA) Salary were removed for the following reasons
+
+- **Minimal Impact on Data Integrity**:
+
+  - Only RBI showed a statistically significant difference between players with and without missing salary values and even that difference was not as bad as we had thought, seen by the histograms above. While the other key variables had distributions remain the same basically.
+  - This suggests the removal had little to no impact on the overall structure of the dataset.😱
+
+- **Avoids Data Leakage**:
+
+  - Imputing Salary using variables that are later used to predict SalaryLevel could risk leaking target information into the model which is not good because otherwise the whole point of the project is ruined.
+  - By removing only the NA salary rows, we ensure the model is trained on ***clean***, unbiased data.
+
+- **Simplifies Workflow**:
+
+  - Reduces complexity by avoiding imputation.
+  - Keeps the data pipeline clean, transparent, and reproducible.
+
+- **Preserves Representativeness**:
+
+  - The remaining dataset (after dropping NA salaries) is still balanced and representative so it can be used.
+
+---
+
+## Pre-Processing 
+
+#### Now we have to convert categorical variables into factors. Why?
+
+*Because machine learning models require categorical variables in factor format, it ensures that R treats them correctly while modeling the data*.
+
+```{r}
+
+Hitters_cleaned <- Hitters_cleaned %>%
+  mutate(across(c(League, Division, NewLeague), as.factor))
+str(Hitters_cleaned)
+```
+
+
+### Feature Engineering --> Salary Binning For classification
+
+Since we are using **multinomial logistic regression**, we must convert the numerical Salary variable into categories:
+
+- Since we are performing classification, not regression, we need a categorical target.
+
+- We bin Salary into 5 groups using quantiles to ensure balanced classes.
+
+- Before we will illustrate how using other methods such as k-means can give very unbalanced data which is not something we need.
+
+
+```{r}
+Hitters_cleaned <- na.omit(Hitters)
+set.seed(123)
+clusters <- kmeans(Hitters_cleaned$Salary, centers = 5)$cluster
+Hitters_cleaned$SalaryLevel <- factor(clusters, labels = c("Group1", "Group2", "Group3", "Group4", "Group5"))
+table(Hitters_cleaned$SalaryLevel)
+```
+
+As you can see the distribution is almost laughable😂... We have to fix this--> **How**? With quantile based salary levels.
+
+```{r}
+# Create quantile-based salary levels
+Hitters_cleaned <- na.omit(Hitters)
+Hitters_cleaned$SalaryLevel <- cut(Hitters_cleaned$Salary,
+                           breaks = quantile(Hitters_cleaned$Salary, probs = seq(0, 1, length.out = 6), na.rm = TRUE),
+                           include.lowest = TRUE,
+                           labels = c("Group1", "Group2", "Group3", "Group4", "Group5"))
+print(Hitters_cleaned$SalaryLevel)
+table(Hitters_cleaned$SalaryLevel)
+```
+
+Now thats more like it, we have a more balanced dataset!! Now lets make a table to show the boundaries for each group
+
+```{r}
+breaks <- quantile(Hitters_cleaned$Salary, probs = seq(0, 1, length.out = 6), na.rm = TRUE)
+group_ranges <- data.frame(
+  Group = paste0("Group", 1:5),
+  Lower_Bound = head(breaks, -1),
+  Upper_Bound = tail(breaks, -1)
+)
+
+print(group_ranges)
+```
+
+---
+
+# EDA
+
+Explatory data analysis is an analysis approach that identifies general patterns in the data. These patterns include outliers and features of the data that might be unexpected. EDA is an important first step in any data analysis. We will check for outliers, create correlation heatmaps, understand the patterns between 
+
+
+
+```{r}
+
+plot_variable_with_salary <- function(varname, bins = 4) {
+  var <- Hitters[[varname]]
+  
+  
+  if (length(unique(var)) > 10) {
+    var_binned <- cut(var, bins)
+  } else {
+    var_binned <- factor(var)
+  }
+
+  par(mfrow = c(2, 1), mar=c(4,4,2,1))
+
+  
+  boxplot(var, col = "skyblue", horizontal = TRUE,
+          main = paste("Distribution of", varname))
+
+
+  boxplot(Salary ~ var_binned, data = Hitters,
+          col = "lightgreen", 
+          main = paste("Salary by", varname),
+          xlab = varname, ylab = "Salary")
+  
+  par(mfrow = c(1, 1))  
+}
+
+
+plot_variable_with_salary("HmRun")
+plot_variable_with_salary("Years")
+plot_variable_with_salary("CHits")
+plot_variable_with_salary("PutOuts")
+plot_variable_with_salary("Walks")
+plot_variable_with_salary("Runs")
+
+```
+
+⸻
+
+1. **HmRun (Home Runs)**
+- Top plot: Most players hit between 5 and 20 home runs.
+- Bottom plot: Salary generally increases as home run counts increase.
+- Especially noticeable jump in salary from the 20–30 and 30–40 groups.
+- Suggests that power hitters are more highly paid.
+
+⸻
+
+2. **Years (Experience)**
+- Top plot: Players typically have 4 to 15 years of experience.
+- Bottom plot: Salaries tend to increase up to a point (6.75–12.5 years), then flatten or even drop.
+- Peak salary range seems to occur in mid-career.
+- Possible plateau or decline in late career (18+ years).
+
+⸻
+
+3. **CHits (Career Hits)**
+- Top plot: It is right-skewed--> Most players with <2000 hits, one with 3000+.
+- Bottom plot: Not such a clear trend but more or less more hits = higher salary.
+- Performance-based salary reward is not so clear but there seems to be a slight correlation
+
+⸻
+
+4. **PutOuts**
+- Top plot: Many players cluster under ~600 putouts there is a long right tail.
+- Bottom plot: Salary increases steadily across higher putout groups.
+- Suggests players who contribute more defensively (or play positions with more chances) tend to earn more.
+- Or could indicate first basemen, who often have high putouts, earn more.
+
+⸻
+
+5. **Walks**
+- Top plot: Central cluster between 20–60 walks.
+- Bottom plot: Strong relationship — more walks correlate with higher salary.
+- Likely reflects patient hitters or good on-base ability being valued.
+- The top bin (78–105 walks) has the highest median salary.
+
+⸻
+
+6. **Runs**
+- Top plot: The majority of players score between 35 and 70 runs.
+- The median (around 60) shows a fairly balanced distribution.
+- Salary increases steadily with more runs scored.
+- This shows a positive relationship between offensive contribution (in terms of runs scored) and salary.
+
+⸻
+
+**Overall Patterns**:
+
+- Salary is most strongly linked to offensive metrics like power (HmRun) and patience (Walks).
+
+- Experience matters, but only up to a point — younger veterans tend to earn more than late-career players.
+
+- Defense and long-term achievements play a role, but their influence is less direct than explosive, in-game offensive impact.
+
+--- 
+
+We will now make a Correlation Heatmap so that we can see better how the data is distributed:
+
+```{r}
+
+library(ggplot2)
+library(reshape2)
+
+
+numeric_vars <- sapply(Hitters_cleaned, is.numeric)
+cor_matrix <- cor(Hitters_cleaned[, numeric_vars], use = "complete.obs")
+
+
+cor_df <- melt(cor_matrix)
+
+ggplot(cor_df, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", value)), color = "black", size = 2.5) +  # Smaller labels
+  scale_fill_gradient2(
+    low = "#4575b4", mid = "white", high = "#d73027",
+    midpoint = 0, limit = c(-1, 1), name = "Correlation"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+    axis.title = element_blank(),
+    panel.grid = element_blank()
+  ) +
+  ggtitle("Correlation Heatmap") +
+  coord_fixed()
+                          
+```
+
+### What we can see from the Correlation Heatmap:
+
+- **Salary & Career Offensive Stats**
+
+  - Salary shows moderate to strong positive correlations with cumulative batting metrics (CAtBat, CHits, CRuns, CRBI, CWalks). This suggests that players who have accumulated higher offensive totals over their careers tend to earn higher salaries.
+
+
+- **Salary & Single-Season Stats**:
+
+  - There’s a weaker (but still positive) correlation between Salary and current-season measures (AtBat, Hits, Runs, etc.). This indicates that while recent performance matters, a player’s career track record likely plays
+a larger role in determining salary.
+  
+  
+- **Salary & Fielding Stats**: 
+
+  - Variables like PutOuts, Assists, and Errors show little correlation with Salary. This may imply that offensive production (and possibly overall career achievements) are more strongly tied to salary than defensive statistics.
+	
+
+
+### Point E Multinomial Logistic Regression Model analysis
+
+```{r}
+
+mlr_model <- multinom(SalaryLevel ~ ., data = Hitters_cleaned)
+
+summary(mlr_model)
+```
+### Key Insights: 
+
+- ***Residual Deviance*** (6.64):
+
+  - This low value means that the differences between the observed values and the model’s predictions are
+  minimal, suggesting that our model is capturing most of the variation in the data.
+  
+- ***AIC*** (174.6):
+
+  - The Akaike Information Criterion balances model fit and complexity. A lower AIC implies that the model
+  achieves a good fit without being overly complex. In this case, 174.6 is quite favorable, indicating that
+  the model is both accurate and relatively parsimonious.
+
+- Overall Conclusion:
+
+  - These statistics tell us that our multi linear regression model, used for predicting individual salary
+  levels, is performing exceptionally well on the *training data*. However, while these metrics are very
+  promising, it’s crucial to validate this performance on a test set or via cross-validation. This ensures
+  that the high accuracy is not simply due to overfitting, and that the model will generalize well to new,
+  unseen data. Overall, these results are a strong indicator that our chosen predictors are effective, and
+  they provide a solid foundation as we move forward to further evaluate and refine our model.
+
+```{r}
+odds_ratios <- exp(coef(mlr_model))
+print(odds_ratios)
+```
+
+### Key Insights: 
+
+- **Hits & PutOuts Often Show High Odds Ratios**:
+
+  - In multiple groups, Hits has odds ratios well above 1, meaning that each additional hit significantly increases the odds of a player landing in those higher salary groups.
+  - PutOuts can be even larger in some groups, suggesting that strong defensive output also correlates with higher salary categories.
+
+- **RBI and Years Also Matter**:
+
+  - For some salary groups, RBI and Years have odds ratios around 2.0 or above, meaning more career RBIs or additional years played also meaningfully boost the odds of being in that group.
+	
+- **Variables Below 1**:
+	
+  - Any odds ratio < 1, for example Runs at 0.62 in one group, implies that higher values of that predictor reduce the odds of belonging to that specific salary group.
+
+**Why It’s Important for the Project:**
+
+- ***Identifies Key Drivers***: The high odds ratios for Hits, RBI, PutOuts, and Years confirm these are the most influential predictors in distinguishing salary groups.
+
+- ***Provides Interpretability***: Seeing which variables have large positive effects (or negative) clarifies how the model arrives at its salary group classifications—crucial for explaining or justifying the model’s decisions.
+
+- ***Aligns with Domain Expectations***: Offensive (Hits, RBI) and defensive (PutOuts) performance metrics strongly influencing salary levels makes intuitive sense, reinforcing the model’s validity for your project.
+
+
+```{r}
+library(caret)
+
+
+train_preds <- predict(mlr_model, newdata = Hitters_cleaned)
+
+
+confusionMatrix(train_preds, Hitters_cleaned$SalaryLevel)
+
+```
+
+### Key Insights:
+
+- ***Accuracy & Kappa***:
+
+  - The model achieves 99.23% accuracy with a Kappa of 0.9893, indicating nearly perfect agreement between predictions and true classes.
+
+- ***Metrics***:
+
+  - Sensitivity, specificity, and balanced accuracy are almost 1.0 across all groups, meaning the model rarely misclassifies any salary group.
+  
+- ***Implications***:
+
+  - These results show that our predictors effectively separate salary groups, supporting strong model performance.
+  
+  - However, if these numbers are from the training set, validate on a test set to ensure the model isn’t overfitting.
+
+Overall, the confusion matrix confirms that our model is highly accurate and reliable, aligning well with our project goals.🎉🎉
+
+
+---
+
+## Point F : 
+
+\textbf{Error Measure: Classification Error Rate}
+
+Since we are working in a classification setting, the error measure used is the misclassification error rate. While the accuracy is the number of correct predictions over the total number of predictions.
+
+\[
+\text{Error Rate} = 1 - \text{Accuracy}
+\]
+
+\noindent Accuracy is given by:
+
+\[
+\text{Accuracy} = \frac{\text{Number of Correct Predictions}}{\text{Total Number of Predictions}}
+\]
+
+---
+
+#### Now we will conduct an evaluation using a cross validation method given randomly by choosing Lorenzo Cinelli's birthday:
+
+```{r}
+set.seed(29072005)  # Name: [Lorenzo Cinelli]
+
+
+cv_methods = c("1. Vanilla validation set", 
+               "2. LOO-CV", 
+               "3. K-fold CV (with K = 5)", 
+               "4. K-fold CV (with K = 10)")
+
+
+sample(cv_methods, 1)
+
+```
+
+--- 
+
+# We have to use Vanilla Validation Set : 
+
+```{r}
+library(caret)
+library(nnet)
+
+set.seed(29072005)  
+
+train_index <- createDataPartition(Hitters_cleaned$SalaryLevel, p = 0.7, list = FALSE)
+train_set <- Hitters_cleaned[train_index, ]
+test_set  <- Hitters_cleaned[-train_index, ]
+
+
+```
+
+Now lets train the multinomial logistic regression model:
+
+```{r}
+model_vanilla <- train(SalaryLevel ~ ., 
+                       data = train_set, 
+                       method = "multinom", 
+                       trace = FALSE)
+
+
+```
+
+Then we have to predict the Salary Level on the test set:
+
+```{r}
+predictions <- predict(model_vanilla, newdata = test_set)
+
+
+conf_matrix <- confusionMatrix(predictions, test_set$SalaryLevel)
+
+
+```
+
+And finally print the accuracy and the error rate:
+```{r}
+
+accuracy <- conf_matrix$overall['Accuracy']
+error_rate <- 1 - accuracy
+
+cat("Accuracy:", as.numeric(accuracy), "\n")
+cat("Error Rate:", as.numeric(error_rate), "\n")
+```
+
+### Key Insights: 
+
+- *Accuracy*:
+
+  - The model achieves around 73% accuracy, which establishes a solid baseline for predicting salary levels.
+
+- *Room for Improvement*:
+
+  - With a 27% error rate, there’s clear potential to improve the model—through techniques like feature selection or regularization—to reduce misclassification.
+
+- *Model Comparison*:
+
+  - These results serve as a benchmark. Any refined model (e.g., using ***Lasso***) should ideally achieve higher  accuracy or lower error, confirming that your refinements are beneficial.
+
+- *Project Impact*:
+
+  - A 73% baseline shows that your predictors carry useful information for salary classification. Enhancing this model could lead to even more reliable and interpretable predictions, as to make sure Salary Level is identified correctly.
+
+
+---
+
+## Second model of our choice is K-FOLD CV (K = 10)
+
+##### WHY ?:
+
+- We do not have a huge data set , k-fold provides a great balance, it is less noisy than vanilla , less biased than 5-fold and much faster than LOO-CV. 
+
+- Thus we decided to use K-fold CV with K=10!!!😉😉😉
+
+
+```{r}
+library(caret)
+library(nnet)
+
+set.seed(29072005) 
+
+
+cv_control <- trainControl(method = "cv", number = 10)
+
+
+model_k10 <- train(SalaryLevel ~ . -Salary,  
+                   data = Hitters_cleaned,
+                   method = "multinom",
+                   trControl = cv_control,
+                   trace = FALSE)
+
+
+accuracy_k10 <- model_k10$results$Accuracy
+error_rate_k10 <- 1 - accuracy_k10
+
+
+cat("10-Fold CV Accuracy:", round(accuracy_k10, 4), "\n")
+cat("10-Fold CV Error Rate:", round(error_rate_k10, 4), "\n")
+```
+
+```{r}
+mean_accuracy <- mean(accuracy_k10)  
+mean_error_rate <- 1 - mean_accuracy  
+
+cat("10-Fold CV Mean Accuracy:", round(mean_accuracy, 4), "\n")
+cat("10-Fold CV Mean Error Rate:", round(mean_error_rate, 4), "\n")
+
+```
+
+
+### Key Insights:
+
+1. *Model Performance*
+	
+  - The average accuracy across the folds is around 50%, which means the model correctly predicts the salary level in about 5 out of every 10 cases.
+
+  - The classification error rate is also around 50%, meaning there’s still significant room for improvement.
+
+2. *Compared to the Vanilla Validation* (72.9% accuracy):
+
+  - Our model performed much better on the vanilla split, ~72.9% accuracy, ~27% error rate, this suggests that the model may be overfitting to the training set in the vanilla validation. Such conclusion is expected because vanilla validation only tests the model once on one split.
+  
+  - 10-fold CV is more reliable because it evaluates on multiple folds and gives a better estimate of how well the model generalizes.
+
+3. *Interpretation*
+
+The 10-FOLD CV results show that the model achieves around 50% for both accuracy and error. This illustrates that while the model captures some structure in the data, it does not generalize particularly well overall. Comapred to the higher accuracy from the vanilla validation, the cross validated results suggest that the model may be overfitting to the training data. Therefore, 10-fold CV provides a more conservative and realistic estimate of the model's performance on unseen data. To fix this error we have to conduct some feature selection because some irrelevant or highly correlated features may be confusing the model. Moreover maybe multinomial logistic regression is too simple for our model and we might need some other models, such as Random Forest or XG boost or maybe even Support Vector Machines (SVM), to improve overall performance of the model.
+
+---
+
+## Point G --> Identifying a better model to predict Salary Level
+
+```{r}
+library(caret)
+library(glmnet)
+
+set.seed(123)
+
+
+train_idx <- createDataPartition(Hitters_cleaned$SalaryLevel, p = 0.7, list = FALSE)
+train_data <- Hitters_cleaned[train_idx, ]
+test_data  <- Hitters_cleaned[-train_idx, ]
+
+
+x_train <- model.matrix(SalaryLevel ~ . - 1, data = train_data)
+y_train <- train_data$SalaryLevel
+
+x_test <- model.matrix(SalaryLevel ~ . - 1, data = test_data)
+y_test <- test_data$SalaryLevel
+
+# Run cross-validation for Lasso on training set
+cv_lasso <- cv.glmnet(x_train, y_train, family = "multinomial", alpha = 1, type.multinomial = "ungrouped")
+best_lambda <- cv_lasso$lambda.min
+cat("Best lambda from cross-validation:", best_lambda, "\n")
+
+# Fit the final Lasso model on the training set using the best lambda
+lasso_model <- glmnet(x_train, y_train, family = "multinomial", alpha = 1, lambda = best_lambda, type.multinomial = "ungrouped")
+
+
+preds_test <- predict(lasso_model, newx = x_test, s = best_lambda, type = "class")
+preds_test <- as.factor(preds_test)
+
+
+conf_mat_test <- confusionMatrix(preds_test, y_test)
+print(conf_mat_test)
+```
+
+## Key Insights:
+
+1. *Overall Performance*:
+
+  - ***Accuracy around 86.49%***: A solid improvement over the previous vanilla model which had 73% accuracy. This indicates that Lasso’s feature selection and regularization are helping the model generalize better.
+  
+  - ***Kappa 0.83***: This shows strong agreement between predicted and actual classes across all salary groups, which is much better than random guessing illustrating an improvement from the baseline model.
+  
+  - ***Confidence Interval (0.7853, 0.9332)***: We’re 95% confident that the model’s true accuracy lies between, 79% and 93%. This is a reasonably tight range, suggesting consistent performance.
+
+⸻
+
+2. *Class-Level Metrics*
+
+  - ***High Sensitivity/Specificity***: Most classes show good balance between true positive rate (sensitivity) and true negative rate (specificity). This means the model identifies each salary group accurately and doesn’t confuse them too often with other groups.
+  
+  - ***Detection Rate & Balanced Accuracy***: Also strong across classes, further confirming the model’s robustness in handling multiple salary categories.
+
+⸻
+
+3. *Conclusion*
+
+  - ***Improvement Over Vanilla***: Jumping from 73% accuracy to 86.5% indicates Lasso is effectively cutting on the irrelevant predictors and reducing overfitting.
+  
+  - ***Better Generalization***: Regularization typically makes a more parsimonious model that is less likely to overfit, making these results more reliable for the unseen data.
+  
+  - ***Practical Takeaway***: With fewer but more meaningful predictors, the Lasso model not only achieves higher accuracy but also remains interpretable.
+
+*So Basically*:
+
+- Using Lasso to predict salary level has significantly boosted accuracy and performance. This strongly suggests that regularization is beneficial in our dataset and that Lasso is one of the best models for it.
+
+
+```{r}
+# 'conf_mat_test' is computed from the test set predictions
+accuracy <- conf_mat_test$overall['Accuracy']
+test_error <- 1 - accuracy
+cat("Test Accuracy:", accuracy, "\n")
+cat("Test Error:", test_error, "\n")
+```
+
+
+## Key Insights and Overall Conclusion:
+
+*Overall Conclusion*:
+
+- Our project set out to predict individual salary levels based on player performance statistics. Here’s a summary of our findings and what can be done to improve everything:
+
+- ***Vanilla Model***:
+
+  - The full multinomial logistic regression initially produced very high training accuracy. However, when evaluated with cross-validation, the accuracy dropped to around 73%, indicating some overfitting. The vanilla model was good, but its performance on unseen data was lower than expected so there could be a lot of improvement.
+  
+- ***Cross-Validation Insights***:
+
+  - Using K-fold, with k=10, cross-validation provided a more realistic measure of our model’s generalization ability. It revealed that while the full model performed well on the training set, its predictive power diminished on new data—highlighting the importance of proper validation to avoid over-optimistic estimates. So to fix this we had to implement a new model on the test set, and we chose to use Lasso.
+	
+- ***Lasso Regularization***:
+
+  - By applying Lasso (with cross-validation) to perform both feature selection and regularization, we were able to eliminate redundant predictors and reduce overfitting. This resulted in a significant accuracy boost—up to about 86.5%. Thus demonstrating that the Lasso model generalizes much better than the vanilla model.
+  
+- ***Improvements and Future Work***:
+
+  - Although our Lasso model achieved much better accuracy, there’s still room for improvement. Future steps could include further hyperparameter tuning, maybe some additional regularization methods, or incorporating more sophisticated feature engineering to refine the model even further. Overall we are happy with the work done and satisfied that it has such high efficiency in predicting Salary Level!!!😊
+
+
+
+
